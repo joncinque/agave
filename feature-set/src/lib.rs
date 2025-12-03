@@ -366,6 +366,8 @@ impl FeatureSet {
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
+            relax_post_exec_min_balance_check: self
+                .is_active(&relax_post_exec_min_balance_check::id()),
         }
     }
 }
@@ -1519,6 +1521,10 @@ pub mod upgrade_bpf_stake_program_to_v5 {
     }
 }
 
+pub mod relax_post_exec_min_balance_check {
+    solana_pubkey::declare_id!("todotodoQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+}
+
 pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::new(|| {
     [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -2558,6 +2564,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             upgrade_bpf_stake_program_to_v5::id(),
             "SIMD-0490: Upgrade BPF Stake Program to v5.0.0",
+        ),
+        (
+            relax_post_exec_min_balance_check::id(),
+            "SIMD-0392: Relaxation of post-execution min_balance check",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
