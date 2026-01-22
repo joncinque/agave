@@ -111,24 +111,47 @@ pub(crate) fn new_post_exec(
         .collect()
 }
 
-// Legacy post and pre-exec account state info calculation. Deprecated by SIMD-0392.
-pub(crate) fn new_legacy(
+// Legacy pre-exec account state info calculation. Deprecated by SIMD-0392.
+pub(crate) fn new_pre_exec_legacy(
+    transaction_context: &TransactionContext,
+    message: &impl SVMMessage,
+    rent: &Rent,
+) -> Vec<TransactionAccountStateInfo> {
+    new_legacy(transaction_context, message, rent)
+}
+
+// Legacy post-exec account state info calculation. Deprecated by SIMD-0392.
+pub(crate) fn new_post_exec_legacy(
+    transaction_context: &TransactionContext,
+    message: &impl SVMMessage,
+    rent: &Rent,
+) -> Vec<TransactionAccountStateInfo> {
+    new_legacy(transaction_context, message, rent)
+}
+
+// legacy helper
+fn new_legacy(
     transaction_context: &TransactionContext,
     message: &impl SVMMessage,
     rent: &Rent,
 ) -> Vec<TransactionAccountStateInfo> {
     (0..message.account_keys().len())
         .map(|i| {
-            let rent_state = if message.is_writable(i) {
+            if message.is_writable(i) {
                 let state = if let Ok(account) = transaction_context
                     .accounts()
                     .try_borrow(i as IndexOfAccount)
                 {
-                    Some(get_account_rent_state(
-                        account.lamports(),
-                        account.data().len(),
-                        rent.minimum_balance(account.data().len()),
-                    ))
+                    Some(WritableTransactionAccountStateInfo {
+                        rent_state: get_account_rent_state(
+                            account.lamports(),
+                            account.data().len(),
+                            rent.minimum_balance(account.data().len()),
+                        ),
+                        balance: account.lamports(),
+                        data_size: account.data().len(),
+                        owner: *account.owner(),
+                    })
                 } else {
                     None
                 };
@@ -139,14 +162,7 @@ pub(crate) fn new_legacy(
                 state
             } else {
                 None
-            };
-
-            rent_state.map(|rent_state| WritableTransactionAccountStateInfo {
-                rent_state,
-                balance: 0,
-                data_size: 0,
-                owner: Pubkey::default(),
-            })
+            }
         })
         .collect()
 }
@@ -156,8 +172,8 @@ pub(crate) fn verify_changes(
     post_state_infos: &[TransactionAccountStateInfo],
     transaction_context: &TransactionContext,
 ) -> Result<()> {
-    for (i, state_info) in pre_state_infos.iter().zip(post_state_infos).enumerate() {
-        if let (Some(pre_state_info), Some(post_state_info)) = state_info {
+    for (i, exec_state_info) in pre_state_infos.iter().zip(post_state_infos).enumerate() {
+        if let (Some(pre_state_info), Some(post_state_info)) = exec_state_info {
             check_rent_state(
                 &pre_state_info.rent_state,
                 &post_state_info.rent_state,
@@ -243,26 +259,6 @@ mod test {
 
     fn ctx_from(accounts: Vec<(Pubkey, AccountSharedData)>, rent: &Rent) -> TransactionContext<'_> {
         TransactionContext::new(accounts, rent.clone(), 20, 20, 1)
-    }
-
-    fn is_rent_exempt(v: &TransactionAccountStateInfo) -> bool {
-        matches!(
-            v,
-            Some(WritableTransactionAccountStateInfo {
-                rent_state: RentState::RentExempt,
-                ..
-            })
-        )
-    }
-
-    fn is_rent_paying(v: &TransactionAccountStateInfo) -> bool {
-        matches!(
-            v,
-            Some(WritableTransactionAccountStateInfo {
-                rent_state: RentState::RentPaying { .. },
-                ..
-            })
-        )
     }
 
     #[test]
@@ -369,7 +365,10 @@ mod test {
         let post = new_post_exec(&context, &pre, &sanitized_message, &rent);
 
         // account index 0 in message is key2; expect RentExempt due to grace
-        assert!(is_rent_exempt(&post[0]));
+        assert_eq!(
+            post[0].as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentExempt)
+        );
         assert!(post[1].is_none());
     }
 
@@ -402,7 +401,13 @@ mod test {
         let context_post = TransactionContext::new(tx_accounts, rent.clone(), 20, 20, 1);
         let post = new_post_exec(&context_post, &pre, &sanitized_message, &rent);
 
-        assert!(is_rent_paying(&post[0]));
+        assert_eq!(
+            post[0].as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentPaying {
+                data_size: data_len,
+                lamports: post_balance
+            })
+        );
 
         // verify_changes should flag InsufficientFundsForRent
         let res = verify_changes(&pre, &post, &context_post);
@@ -446,7 +451,13 @@ mod test {
         let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 1);
         let post = new_post_exec(&context_post, &pre, &sanitized_message, &rent);
 
-        assert!(is_rent_paying(&post[0]));
+        assert_eq!(
+            post[0].as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentPaying {
+                data_size: post_len,
+                lamports: pre_balance
+            })
+        );
         let res = verify_changes(&pre, &post, &context_post);
         assert_eq!(
             res.err(),
@@ -489,7 +500,13 @@ mod test {
         let context_post = TransactionContext::new(tx_accounts_post, rent.clone(), 20, 20, 1);
         let post = new_post_exec(&context_post, &pre, &sanitized_message, &rent);
 
-        assert!(is_rent_paying(&post[0]));
+        assert_eq!(
+            post[0].as_ref().map(|info| &info.rent_state),
+            Some(&RentState::RentPaying {
+                data_size: data_len,
+                lamports: pre_balance
+            })
+        );
         let res = verify_changes(&pre, &post, &context_post);
         assert_eq!(
             res.err(),
@@ -501,21 +518,13 @@ mod test {
     fn test_verify_changes() {
         let key1 = Keypair::new();
         let key2 = Keypair::new();
-        let pre_rent_state = vec![
-            Some(WritableTransactionAccountStateInfo {
-                rent_state: RentState::Uninitialized,
-                balance: 0,
-                data_size: 0,
-                owner: Pubkey::default(),
-            }),
-            Some(WritableTransactionAccountStateInfo {
-                rent_state: RentState::Uninitialized,
-                balance: 0,
-                data_size: 0,
-                owner: Pubkey::default(),
-            }),
-        ];
-        let post_rent_state = vec![Some(WritableTransactionAccountStateInfo {
+        let pre_state_infos = vec![Some(WritableTransactionAccountStateInfo {
+            rent_state: RentState::Uninitialized,
+            balance: 0,
+            data_size: 0,
+            owner: Pubkey::default(),
+        })];
+        let post_rent_states = vec![Some(WritableTransactionAccountStateInfo {
             rent_state: RentState::Uninitialized,
             balance: 0,
             data_size: 0,
@@ -529,16 +538,16 @@ mod test {
 
         let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 1);
 
-        let result = verify_changes(&pre_rent_state, &post_rent_state, &context);
+        let result = verify_changes(&pre_state_infos, &post_rent_states, &context);
         assert!(result.is_ok());
 
-        let pre_rent_state = vec![Some(WritableTransactionAccountStateInfo {
+        let pre_state_infos = vec![Some(WritableTransactionAccountStateInfo {
             rent_state: RentState::Uninitialized,
             balance: 0,
             data_size: 0,
             owner: Pubkey::default(),
         })];
-        let post_rent_state = vec![Some(WritableTransactionAccountStateInfo {
+        let post_rent_states = vec![Some(WritableTransactionAccountStateInfo {
             rent_state: RentState::RentPaying {
                 data_size: 2,
                 lamports: 5,
@@ -554,7 +563,7 @@ mod test {
         ];
 
         let context = TransactionContext::new(transaction_accounts, Rent::default(), 20, 20, 1);
-        let result = verify_changes(&pre_rent_state, &post_rent_state, &context);
+        let result = verify_changes(&pre_state_infos, &post_rent_states, &context);
         assert_eq!(
             result.err(),
             Some(TransactionError::InsufficientFundsForRent { account_index: 0 })

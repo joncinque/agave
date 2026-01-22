@@ -11,8 +11,8 @@ use {
         program_loader::{get_program_deployment_slot, load_program_with_pubkey},
         rollback_accounts::RollbackAccounts,
         transaction_account_state_info::{
-            get_uninitialized_accounts_size, new_legacy, new_post_exec, new_pre_exec,
-            verify_changes,
+            get_uninitialized_accounts_size, new_post_exec, new_post_exec_legacy, new_pre_exec,
+            new_pre_exec_legacy, verify_changes,
         },
         transaction_balances::{BalanceCollectionRoutines, BalanceCollector},
         transaction_error_metrics::TransactionErrorMetrics,
@@ -967,7 +967,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
         let pre_account_state_info = if environment.feature_set.relax_post_exec_min_balance_check {
             new_pre_exec(&transaction_context, tx)
         } else {
-            new_legacy(&transaction_context, tx, &environment.rent)
+            new_pre_exec_legacy(&transaction_context, tx, &environment.rent)
         };
 
         let log_collector = if config.recording_config.enable_log_recording {
@@ -1025,7 +1025,7 @@ impl<FG: ForkGraph> TransactionBatchProcessor<FG> {
                             &environment.rent,
                         )
                     } else {
-                        new_legacy(&transaction_context, tx, &environment.rent)
+                        new_post_exec_legacy(&transaction_context, tx, &environment.rent)
                     };
                 verify_changes(
                     &pre_account_state_info,
