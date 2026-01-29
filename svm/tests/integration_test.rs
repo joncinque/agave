@@ -2376,7 +2376,7 @@ fn simd0392_balance_checks() -> Vec<SvmTestEntry> {
 
     let base_rent = Rent::default();
     let bumped_rent = Rent {
-        lamports_per_byte_year: base_rent.lamports_per_byte_year.saturating_mul(4),
+        lamports_per_byte: base_rent.lamports_per_byte.saturating_mul(4),
         ..base_rent
     };
 
