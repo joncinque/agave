@@ -63,7 +63,7 @@ use {
     agave_fs::buffered_reader::RequiredLenBufFileRead,
     dashmap::{DashMap, DashSet},
     log::*,
-    rand::{rng, Rng},
+    rand::{rng, RngExt},
     rayon::{prelude::*, ThreadPool},
     seqlock::SeqLock,
     smallvec::SmallVec,

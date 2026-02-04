@@ -1,6 +1,6 @@
 use {
     bencher::{benchmark_group, benchmark_main, Bencher},
-    rand::Rng,
+    rand::{Rng, RngExt},
     solana_account::AccountSharedData,
     solana_pubkey::Pubkey,
     solana_vote::vote_account::{VoteAccount, VoteAccounts},

@@ -1,5 +1,5 @@
 use {
-    rand::Rng,
+    rand::{Rng, RngExt},
     std::{
         num::NonZero,
         ops::{Bound, RangeBounds},

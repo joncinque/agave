@@ -11,7 +11,7 @@ use {
         bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, loader_v4, native_loader,
     },
     solana_svm_type_overrides::{
-        rand::{Rng, rng},
+        rand::{RngExt, rng},
         sync::{
             Arc, Condvar, Mutex, RwLock,
             atomic::{AtomicU64, Ordering},
@@ -1288,10 +1288,7 @@ impl<FG: ForkGraph> ProgramCache<FG> {
             now: Slot,
         ) -> (usize, u64) {
             let mut rng = rng();
-            // gen_range is deprecated in favor of random_range in rand>=0.9, but we also get
-            // rnd() from shuttle, which doesn't yet support rand 0.9 APIs
-            #[allow(deprecated)]
-            let index = rng.gen_range(0..candidates.len());
+            let index = rng.random_range(0..candidates.len());
             let usage_counter = candidates
                 .get(index)
                 .expect("Failed to get cached entry")
