@@ -192,6 +192,8 @@ impl Bank {
     fn build_updated_stake_reward(
         stakes_cache_accounts: &im::HashMap<Pubkey, StakeAccount<Delegation>>,
         partitioned_stake_reward: &PartitionedStakeReward,
+        rent: &Rent,
+        feature_set: &FeatureSet,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -209,13 +211,22 @@ impl Bank {
         account
             .checked_add_lamports(partitioned_stake_reward.stake_reward)
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
-        assert_eq!(
-            stake
-                .delegation
-                .stake
-                .saturating_add(partitioned_stake_reward.stake_reward),
-            partitioned_stake_reward.stake.delegation.stake
-        );
+        if feature_set
+            .is_active(&agave_feature_set::rent_adjusted_delegations::id()) {
+            let minimum_balance = rent.minimum_balance(account.data().len());
+            assert!(
+                partitioned_stake_reward.stake.delegation.stake
+                    <= account.lamports().saturating_sub(minimum_balance),
+            );
+        } else {
+            assert_eq!(
+                stake
+                    .delegation
+                    .stake
+                    .saturating_add(partitioned_stake_reward.stake_reward),
+                partitioned_stake_reward.stake.delegation.stake
+            );
+        }
         account
             .set_state(&StakeStateV2::Stake(
                 meta,

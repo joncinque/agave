@@ -1295,6 +1295,10 @@ pub mod block_revenue_sharing {
     solana_pubkey::declare_id!("B1ockRevenueSharing111111111111111111111111");
 }
 
+pub mod rent_adjusted_delegations {
+    solana_pubkey::declare_id!("7MYx95UBiJufqnumyN7HfskJ9vKdcGMmhreVguqrE97K");
+}
+
 pub mod vote_account_initialize_v2 {
     solana_pubkey::declare_id!("VoteAccount1nitia1izeV211111111111111111111");
 }
@@ -2346,6 +2350,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             direct_account_pointers_in_program_input::id(),
             "SIMD-0449: Direct Account Pointers in Program Input",
+        ),
+        (
+            rent_adjusted_delegations::id(),
+            "SIMD-0488: Rent-adjusted delegations",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
