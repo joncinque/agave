@@ -43,8 +43,11 @@ struct DelegationRewards {
 
 #[derive(Default)]
 struct RewardsAccumulator {
+    /// Accounts receiving voting commissions at the epoch boundary
     reward_commissions: RewardCommissions,
+    /// Number of stake rewards, used to figure out size of rewards vector
     num_stake_rewards: usize,
+    /// Accumulated reward lamports, only used for sanity checks
     total_stake_rewards_lamports: u64,
 }
 
@@ -439,6 +442,7 @@ impl Bank {
         new_rate_activation_epoch: Option<Epoch>,
         delay_commission_updates: bool,
         commission_rate_in_basis_points: bool,
+        adjust_delegations_for_rent: bool,
     ) -> Option<DelegationRewards> {
         // curry closure to add the contextual stake_pubkey
         let reward_calc_tracer = reward_calc_tracer.as_ref().map(|outer| {
@@ -462,6 +466,12 @@ impl Bank {
         };
         let vote_state = vote_account.vote_state_view();
         let stake_state = stake_account.stake_state();
+
+        let current_lamports = stake_account.lamports();
+        let minimum_lamports = self
+            .rent_collector
+            .rent
+            .minimum_balance(stake_account.data_len());
 
         // Fetch the voter commission from past epochs to attempt to
         // delay the effect of commission updates by at least one
@@ -496,7 +506,9 @@ impl Bank {
             reward_calc_tracer,
             new_rate_activation_epoch,
             commission_rate_in_basis_points,
-            stake_account.lamports(),
+            current_lamports,
+            minimum_lamports,
+            adjust_delegations_for_rent,
         ) {
             Ok((stake_reward, commission_lamports, stake)) => {
                 let stake_reward = PartitionedStakeReward {
@@ -544,6 +556,9 @@ impl Bank {
         let commission_rate_in_basis_points = self
             .feature_set
             .is_active(&feature_set::commission_rate_in_basis_points::id());
+        let adjust_delegations_for_rent = self
+            .feature_set
+            .is_active(&feature_set::rent_adjusted_delegations::id());
 
         let mut measure_redeem_rewards = Measure::start("redeem-rewards");
         // For N stake delegations, where N is >1,000,000, we produce:
@@ -575,6 +590,7 @@ impl Bank {
                                 new_warmup_cooldown_rate_epoch,
                                 delay_commission_updates,
                                 commission_rate_in_basis_points,
+                                adjust_delegations_for_rent,
                             )
                         });
                     let (stake_reward, maybe_reward_record) = match maybe_reward_record {

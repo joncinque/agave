@@ -16,6 +16,7 @@ use {
     solana_accounts_db::stake_rewards::{StakeReward, StakeRewardInfo},
     solana_measure::measure_us,
     solana_pubkey::Pubkey,
+    solana_rent::Rent,
     solana_reward_info::RewardType,
     solana_stake_interface::state::{Delegation, StakeStateV2},
     std::sync::{Arc, atomic::Ordering::Relaxed},
@@ -193,7 +194,7 @@ impl Bank {
         stakes_cache_accounts: &im::HashMap<Pubkey, StakeAccount<Delegation>>,
         partitioned_stake_reward: &PartitionedStakeReward,
         rent: &Rent,
-        feature_set: &FeatureSet,
+        adjust_delegations_for_rent: bool,
     ) -> Result<StakeReward, DistributionError> {
         let stake_account = stakes_cache_accounts
             .get(&partitioned_stake_reward.stake_pubkey)
@@ -211,8 +212,7 @@ impl Bank {
         account
             .checked_add_lamports(partitioned_stake_reward.stake_reward)
             .map_err(|_| DistributionError::ArithmeticOverflow)?;
-        if feature_set
-            .is_active(&agave_feature_set::rent_adjusted_delegations::id()) {
+        if adjust_delegations_for_rent {
             let minimum_balance = rent.minimum_balance(account.data().len());
             assert!(
                 partitioned_stake_reward.stake.delegation.stake
@@ -274,6 +274,10 @@ impl Bank {
         let mut updated_stake_rewards = Vec::with_capacity(indices.len());
         let stakes_cache = self.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
+        let rent = &self.rent_collector.rent;
+        let adjust_delegations_for_rent = self
+            .feature_set
+            .is_active(&agave_feature_set::rent_adjusted_delegations::id());
         for index in indices {
             let partitioned_stake_reward = partition_rewards
                 .all_stake_rewards
@@ -290,8 +294,12 @@ impl Bank {
                 });
             let stake_pubkey = partitioned_stake_reward.stake_pubkey;
             let reward_amount = partitioned_stake_reward.stake_reward;
-            match Self::build_updated_stake_reward(stakes_cache_accounts, partitioned_stake_reward)
-            {
+            match Self::build_updated_stake_reward(
+                stakes_cache_accounts,
+                partitioned_stake_reward,
+                rent,
+                adjust_delegations_for_rent,
+            ) {
                 Ok(stake_reward) => {
                     lamports_distributed += reward_amount;
                     updated_stake_rewards.push(stake_reward);
@@ -346,6 +354,7 @@ mod tests {
         solana_vote_interface::state::BLS_PUBLIC_KEY_COMPRESSED_SIZE,
         solana_vote_program::vote_state,
         std::sync::Arc,
+        test_case::test_case,
     };
 
     #[test]
@@ -629,10 +638,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_updated_stake_reward() {
+    #[test_case(true; "adjust_delegations_for_rent")]
+    #[test_case(false; "no_adjust_delegations_for_rent")]
+    fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
+        let rent = &bank.rent_collector.rent;
 
         let voter_pubkey = Pubkey::new_unique();
         let new_stake = Stake {
@@ -656,8 +667,13 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap_err(),
+            Bank::build_updated_stake_reward(
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap_err(),
             DistributionError::AccountNotFound
         );
         drop(stakes_cache);
@@ -687,8 +703,13 @@ mod tests {
         let stakes_cache = bank.stakes_cache.stakes();
         let stakes_cache_accounts = stakes_cache.stake_delegations();
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap_err(),
+            Bank::build_updated_stake_reward(
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap_err(),
             DistributionError::ArithmeticOverflow
         );
         drop(stakes_cache);
@@ -750,8 +771,13 @@ mod tests {
             },
         };
         assert_eq!(
-            Bank::build_updated_stake_reward(stakes_cache_accounts, &partitioned_stake_reward,)
-                .unwrap(),
+            Bank::build_updated_stake_reward(
+                stakes_cache_accounts,
+                &partitioned_stake_reward,
+                rent,
+                adjust_delegations_for_rent,
+            )
+            .unwrap(),
             expected_stake_reward
         );
         drop(stakes_cache);
