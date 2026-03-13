@@ -643,7 +643,13 @@ mod tests {
     fn test_build_updated_stake_reward(adjust_delegations_for_rent: bool) {
         let (genesis_config, _mint_keypair) = create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
         let bank = Bank::new_for_tests(&genesis_config);
-        let rent = &bank.rent_collector.rent;
+        let mut rent = bank.rent_collector.rent.clone();
+        let rent_exempt_reserve = rent.minimum_balance(StakeStateV2::size_of());
+
+        // Adjust rent down, no impact at all
+        if adjust_delegations_for_rent {
+            rent.lamports_per_byte /= 2;
+        }
 
         let voter_pubkey = Pubkey::new_unique();
         let new_stake = Stake {
@@ -670,15 +676,13 @@ mod tests {
             Bank::build_updated_stake_reward(
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
-                rent,
+                &rent,
                 adjust_delegations_for_rent,
             )
             .unwrap_err(),
             DistributionError::AccountNotFound
         );
         drop(stakes_cache);
-
-        let rent_exempt_reserve = 2_282_880;
 
         let overflowing_account = Pubkey::new_unique();
         let mut stake_account = AccountSharedData::new(
@@ -706,7 +710,7 @@ mod tests {
             Bank::build_updated_stake_reward(
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
-                rent,
+                &rent,
                 adjust_delegations_for_rent,
             )
             .unwrap_err(),
@@ -774,7 +778,7 @@ mod tests {
             Bank::build_updated_stake_reward(
                 stakes_cache_accounts,
                 &partitioned_stake_reward,
-                rent,
+                &rent,
                 adjust_delegations_for_rent,
             )
             .unwrap(),

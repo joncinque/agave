@@ -131,7 +131,10 @@ fn redeem_stake_rewards(
 
         if adjust_delegations_for_rent {
             let new_delegation = std::cmp::min(
-                stake.delegation.stake.saturating_add(calculated_stake_rewards.staker_rewards),
+                stake
+                    .delegation
+                    .stake
+                    .saturating_add(calculated_stake_rewards.staker_rewards),
                 current_lamports
                     .saturating_add(calculated_stake_rewards.staker_rewards)
                     .saturating_sub(minimum_lamports),
@@ -349,8 +352,14 @@ mod tests {
         // bootstrap means fully-vested stake at epoch 0
         let stake_lamports = 1;
         let mut stake = new_stake(stake_lamports, &Pubkey::default(), &vote_state, u64::MAX);
-        let rent = Rent::default();
+        let mut rent = Rent::default();
         let minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
+
+        // Adjust rent down, no impact
+        if adjust_delegations_for_rent {
+            rent.lamports_per_byte /= 2;
+        }
+        let new_minimum_balance = rent.minimum_balance(StakeStateV2::size_of());
 
         // this one can't collect now, credits_observed == vote_state.credits()
         assert_eq!(
@@ -368,7 +377,7 @@ mod tests {
                 null_tracer(),
                 None,
                 stake_lamports + minimum_balance,
-                minimum_balance,
+                new_minimum_balance,
                 adjust_delegations_for_rent,
             )
         );
@@ -393,7 +402,7 @@ mod tests {
                 null_tracer(),
                 None,
                 stake_lamports + minimum_balance,
-                minimum_balance,
+                new_minimum_balance,
                 adjust_delegations_for_rent,
             )
         );
@@ -738,6 +747,262 @@ mod tests {
                 null_tracer(),
                 None,
             )
+        );
+    }
+
+    fn check_rent_adjusted_stake_delegation(
+        rewarded_epoch: u64,
+        mut pre_stake: Stake,
+        pre_lamports: u64,
+        new_minimum_balance: u64,
+        total_rewards: u64,
+        post_stake: Stake,
+        staker_rewards: Option<u64>,
+    ) {
+        let mut vote_state = VoteStateV4::default();
+        // put 1 credit to create rewards
+        vote_state.increment_credits(rewarded_epoch, 1);
+        let maybe_rewards = redeem_stake_rewards(
+            rewarded_epoch,
+            &mut pre_stake,
+            &PointValue {
+                rewards: total_rewards,
+                points: 1,
+            },
+            0,
+            DelegatedVoteState::from(&vote_state),
+            &StakeHistory::default(),
+            null_tracer(),
+            None,
+            pre_lamports,
+            new_minimum_balance,
+            true, // adjust_delegations_for_rent
+        );
+        assert_eq!(pre_stake, post_stake);
+        assert_eq!(maybe_rewards.map(|x| x.0), staker_rewards)
+    }
+
+    #[test]
+    fn rent_adjusted_stake_delegation_calculations() {
+        let old_minimum_balance = 8;
+        let new_minimum_balance = 9;
+        let rewarded_epoch = 1;
+
+        // No rewards at all -> updated (all stakes get driven forward if
+        // inflation is disabled)
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            new_minimum_balance + 1,
+            new_minimum_balance,
+            0,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(0),
+        );
+
+        // Stake receives no rewards or delegation adjustment -> no update
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            new_minimum_balance + 1,
+            new_minimum_balance,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            None,
+        );
+
+        // Already destaked -> no update
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 0,
+                    deactivation_epoch: 0,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            old_minimum_balance - 1,
+            new_minimum_balance,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 0,
+                    deactivation_epoch: 0,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            None,
+        );
+
+        // Staked, already below minimum, go further below minimum
+        // -> destaked, still one lamport of rewards though
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            old_minimum_balance - 1,
+            new_minimum_balance,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 0,
+                    deactivation_epoch: rewarded_epoch,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(1),
+        );
+
+        // Delegation hits exactly 0 -> destaked, no rewards
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            new_minimum_balance,
+            new_minimum_balance,
+            0,
+            Stake {
+                delegation: Delegation {
+                    stake: 0,
+                    deactivation_epoch: rewarded_epoch,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(0),
+        );
+
+        // Delegation decreases to 1 -> still staked
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 2,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            new_minimum_balance + 1,
+            new_minimum_balance,
+            0,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(0),
+        );
+
+        // Rewards partially cover minimum balance change
+        // -> decrease stake
+        // This case is confusing because it pays out 2 lamports in rewards,
+        // so we adjust minimum up so that even with 2 lamports in rewards, the
+        // delegation goegs down.
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 2,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            new_minimum_balance,
+            new_minimum_balance + 1,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(2),
+        );
+
+        // Rewards cover minimum balance change -> no change in stake
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            new_minimum_balance,
+            new_minimum_balance,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(1),
+        );
+
+        // Well above new minimum balance -> delegation change capped to rewards
+        check_rent_adjusted_stake_delegation(
+            rewarded_epoch,
+            Stake {
+                delegation: Delegation {
+                    stake: 1,
+                    ..Default::default()
+                },
+                credits_observed: 0,
+            },
+            new_minimum_balance + 2,
+            new_minimum_balance,
+            1,
+            Stake {
+                delegation: Delegation {
+                    stake: 2,
+                    ..Default::default()
+                },
+                credits_observed: 1,
+            },
+            Some(1),
         );
     }
 
