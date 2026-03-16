@@ -849,4 +849,99 @@ mod tests {
         } = bank.store_stake_accounts_in_partition(&partitioned_rewards, 0);
         assert_eq!(expected_total, lamports_distributed);
     }
+
+    #[test]
+    fn test_distribute_with_increased_rent() {
+        let (mut genesis_config, _mint_keypair) =
+            create_genesis_config(1_000_000 * LAMPORTS_PER_SOL);
+        genesis_config.epoch_schedule = EpochSchedule::custom(432000, 432000, false);
+        let bank = Bank::new_for_tests(&genesis_config);
+
+        // Set up epoch_rewards sysvar with rewards with 10e9 lamports to distribute.
+        let total_rewards = 10 * LAMPORTS_PER_SOL;
+        let num_partitions = 2; // num_partitions is arbitrary and unimportant for this test
+        let total_points = (total_rewards * 42) as u128; // total_points is arbitrary for the purposes of this test
+        bank.create_epoch_rewards_sysvar(
+            0,
+            42,
+            num_partitions,
+            &PointValue {
+                rewards: total_rewards,
+                points: total_points,
+            },
+        );
+        let pre_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+        let expected_balance =
+            bank.get_minimum_balance_for_rent_exemption(pre_epoch_rewards_account.data().len());
+        // Expected balance is the sysvar rent-exempt balance
+        assert_eq!(pre_epoch_rewards_account.lamports(), expected_balance);
+
+        // Use lower lamports per byte for creating, bank has higher amount
+        let mut lower_rent = bank.rent_collector.rent.clone();
+        lower_rent.lamports_per_byte /= 10;
+        let higher_rent = &bank.rent_collector.rent;
+
+        // Set up a partition of rewards to distribute
+        let stake_rewards = [
+            // Zero stake -> destaked
+            StakeReward::new_with_pre_stake_account(0, 0, &lower_rent),
+            // Below new minimum, small reward -> destaked
+            StakeReward::new_with_pre_stake_account(1, 1, &lower_rent),
+            // Below new minimum, no reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(0, LAMPORTS_PER_SOL, &lower_rent),
+            // Below new minimum, small reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(1, LAMPORTS_PER_SOL, &lower_rent),
+            // Below new minimum, big reward -> delegation modified
+            StakeReward::new_with_pre_stake_account(
+                LAMPORTS_PER_SOL as i64,
+                LAMPORTS_PER_SOL,
+                &lower_rent,
+            ),
+            // Above new minimum, small reward -> delegation capped
+            StakeReward::new_with_pre_stake_account(1, LAMPORTS_PER_SOL, higher_rent),
+            // Above new minimum, big reward -> delegation capped
+            StakeReward::new_with_pre_stake_account(
+                LAMPORTS_PER_SOL as i64,
+                LAMPORTS_PER_SOL,
+                higher_rent,
+            ),
+        ]
+        .into_iter()
+        .map(|r| {
+            bank.store_account(&r.1.stake_pubkey, &r.0);
+            r.1
+        })
+        .collect::<Vec<_>>();
+
+        let expected_num = stake_rewards.len();
+        let rewards_to_distribute = stake_rewards
+            .iter()
+            .map(|stake_reward| stake_reward.stake_reward_info.lamports)
+            .sum::<i64>() as u64;
+        let all_rewards = convert_rewards(stake_rewards);
+
+        let partitioned_rewards = StartBlockHeightAndPartitionedRewards {
+            distribution_starting_block_height: bank.block_height() + REWARD_CALCULATION_NUM_BLOCKS,
+            all_stake_rewards: Arc::new(all_rewards),
+            partition_indices: vec![(0..expected_num).collect::<Vec<_>>()],
+        };
+
+        // Distribute rewards
+        let pre_cap = bank.capitalization();
+        bank.distribute_epoch_rewards_in_partition(&partitioned_rewards, 0);
+        let post_cap = bank.capitalization();
+        let post_epoch_rewards_account = bank.get_account(&sysvar::epoch_rewards::id()).unwrap();
+
+        // Assert that epoch rewards sysvar lamports balance does not change
+        assert_eq!(post_epoch_rewards_account.lamports(), expected_balance);
+
+        let epoch_rewards: sysvar::epoch_rewards::EpochRewards =
+            from_account(&post_epoch_rewards_account).unwrap();
+        assert_eq!(epoch_rewards.total_rewards, total_rewards);
+        assert_eq!(epoch_rewards.distributed_rewards, rewards_to_distribute,);
+
+        // Assert that the bank total capital changed by the amount of rewards
+        // distributed
+        assert_eq!(pre_cap + rewards_to_distribute, post_cap);
+    }
 }
