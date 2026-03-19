@@ -111,7 +111,7 @@ fn redeem_stake_rewards(
         ));
     }
 
-    if let Some(calculated_stake_rewards) = calculate_stake_rewards(
+    let maybe_rewards = calculate_stake_rewards(
         rewarded_epoch,
         stake,
         point_value,
@@ -120,7 +120,8 @@ fn redeem_stake_rewards(
         stake_history,
         inflation_point_calc_tracer.as_ref(),
         new_rate_activation_epoch,
-    ) {
+    )
+    .map(|calculated_stake_rewards| {
         if let Some(inflation_point_calc_tracer) = inflation_point_calc_tracer {
             inflation_point_calc_tracer(&InflationPointCalculationEvent::CreditsObserved(
                 stake.credits_observed,
@@ -128,47 +129,38 @@ fn redeem_stake_rewards(
             ));
         }
         stake.credits_observed = calculated_stake_rewards.new_credits_observed;
+        (
+            calculated_stake_rewards.staker_rewards,
+            calculated_stake_rewards.voter_rewards,
+        )
+    });
 
-        if adjust_delegations_for_rent {
-            let new_delegation = std::cmp::min(
-                stake
-                    .delegation
-                    .stake
-                    .saturating_add(calculated_stake_rewards.staker_rewards),
-                current_lamports
-                    .saturating_add(calculated_stake_rewards.staker_rewards)
-                    .saturating_sub(minimum_lamports),
-            );
+    let staker_rewards = maybe_rewards.map(|x| x.0).unwrap_or(0);
+    if adjust_delegations_for_rent {
+        let new_delegation = std::cmp::min(
+            stake.delegation.stake.saturating_add(staker_rewards),
+            current_lamports
+                .saturating_add(staker_rewards)
+                .saturating_sub(minimum_lamports),
+        );
+        // If `maybe_rewards.is_some()`, need to drive forward credits, even
+        // if rewards are zero
+        if new_delegation != stake.delegation.stake || maybe_rewards.is_some() {
             stake.delegation.stake = new_delegation;
-            // Deactivate stake if needed
+            // Deactivate stake if needed. This deactivation is immediate,
+            // unlike a requested deactivation which happens at the next epoch
+            // boundary
             if new_delegation == 0 {
                 stake.delegation.deactivation_epoch = rewarded_epoch;
             }
-        } else {
-            stake.delegation.stake += calculated_stake_rewards.staker_rewards;
-        }
-        Some((
-            calculated_stake_rewards.staker_rewards,
-            calculated_stake_rewards.voter_rewards,
-        ))
-    } else {
-        // No rewards to pay out, but still might need to modify delegation
-        if adjust_delegations_for_rent {
-            let rent_adjusted_delegation = current_lamports.saturating_sub(minimum_lamports);
-            if rent_adjusted_delegation < stake.delegation.stake {
-                stake.delegation.stake = rent_adjusted_delegation;
-                // Deactivate stake if needed
-                if rent_adjusted_delegation == 0 {
-                    stake.delegation.deactivation_epoch = rewarded_epoch;
-                }
-                // no rewards, but return zeroes to force-update the stake account
-                Some((0, 0))
-            } else {
-                None
-            }
+            let voter_rewards = maybe_rewards.map(|x| x.1).unwrap_or(0);
+            Some((staker_rewards, voter_rewards))
         } else {
             None
         }
+    } else {
+        stake.delegation.stake += staker_rewards;
+        maybe_rewards
     }
 }
 
