@@ -1903,7 +1903,7 @@ mod tests {
             &rent,
             true,
         );
-        assert_eq!(pre_account_state_info.len(), num_accounts,);
+        assert_eq!(pre_account_state_info.len(), num_accounts);
 
         assert_eq!(
             TransactionAccountStateInfo::new_post_exec(

@@ -544,7 +544,7 @@ mod test {
     fn test_post_exec_size_shrunk_does_not_require_balance_adjustment() {
         let pre_rent = Rent::default();
         let post_rent = Rent {
-            lamports_per_byte: 10_000,
+            lamports_per_byte: pre_rent.lamports_per_byte * 9,
             ..Rent::default()
         };
 
@@ -554,7 +554,7 @@ mod test {
         let key4 = Keypair::new();
 
         let pre_len: usize = 256;
-        let post_len: usize = 32; // smaller size, but rent increased after creation
+        let post_len: usize = pre_len / 8; // smaller size, but rent increased after creation
         let pre_balance = pre_rent.minimum_balance(pre_len);
         let post_min = post_rent.minimum_balance(post_len);
         assert!(post_min > pre_balance);

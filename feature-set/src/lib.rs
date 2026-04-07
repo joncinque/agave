@@ -87,6 +87,7 @@ pub struct FeatureSnapshot {
     pub validator_admission_ticket: bool,
     pub direct_account_pointers_in_program_input: bool,
     pub upgrade_bpf_stake_program_to_v5: bool,
+    pub relax_post_exec_min_balance_check: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -202,6 +203,7 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
                 &direct_account_pointers_in_program_input::ID,
             ),
             upgrade_bpf_stake_program_to_v5: is_active(&upgrade_bpf_stake_program_to_v5::ID),
+            relax_post_exec_min_balance_check: is_active(&relax_post_exec_min_balance_check::ID),
         }
     }
 }
@@ -366,8 +368,7 @@ impl FeatureSet {
             vote_account_initialize_v2: snapshot.vote_account_initialize_v2,
             direct_account_pointers_in_program_input: snapshot
                 .direct_account_pointers_in_program_input,
-            relax_post_exec_min_balance_check: self
-                .is_active(&relax_post_exec_min_balance_check::id()),
+            relax_post_exec_min_balance_check: snapshot.relax_post_exec_min_balance_check,
         }
     }
 }
