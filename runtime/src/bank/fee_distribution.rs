@@ -16,7 +16,7 @@ use {
 };
 
 #[derive(Error, Debug, PartialEq)]
-enum DepositFeeError {
+pub(super) enum DepositFeeError {
     #[error("fee account became rent paying")]
     InvalidRentPayingAccount,
     #[error("lamport overflow")]

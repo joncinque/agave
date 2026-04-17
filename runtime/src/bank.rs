@@ -975,6 +975,7 @@ struct RewardCommission {
     commission_account: AccountSharedData,
     commission_bps: u16,
     commission_lamports: u64,
+    is_vote_account: bool,
 }
 
 type RewardCommissions = HashMap<Pubkey, RewardCommission, PubkeyHasherBuilder>;
@@ -2584,6 +2585,8 @@ impl Bank {
     /// vectors into a single accounts_with_rewards vector.
     fn calculate_commission_accounts(
         reward_commissions: RewardCommissions,
+        reserved_account_keys: &ReservedAccountKeys,
+        rent: &Rent,
     ) -> RewardCommissionAccounts {
         let mut result = RewardCommissionAccounts {
             accounts_with_rewards: Vec::with_capacity(reward_commissions.len()),
@@ -2595,12 +2598,30 @@ impl Bank {
                 mut commission_account,
                 commission_bps,
                 commission_lamports,
+                is_vote_account,
             },
         ) in reward_commissions
         {
+            let pre_lamports = commission_account.lamports();
             if let Err(err) = commission_account.checked_add_lamports(commission_lamports) {
                 debug!("reward redemption failed for {commission_pubkey}: {err:?}");
                 continue;
+            }
+
+            if !is_vote_account {
+                if let Err(err) = Self::check_collector_account(
+                    &commission_pubkey,
+                    pre_lamports,
+                    &commission_account,
+                    reserved_account_keys,
+                    rent,
+                ) {
+                    debug!(
+                        "reward redemption failed for {commission_pubkey} due to commission \
+                         account error: {err:?}"
+                    );
+                    continue;
+                }
             }
 
             result.accounts_with_rewards.push((
@@ -2616,6 +2637,33 @@ impl Bank {
             result.total_reward_commission_lamports += commission_lamports;
         }
         result
+    }
+
+    fn check_collector_account(
+        collector_id: &Pubkey,
+        pre_lamports: u64,
+        account: &AccountSharedData,
+        reserved_account_keys: &ReservedAccountKeys,
+        rent: &Rent,
+    ) -> std::result::Result<(), self::fee_distribution::DepositFeeError> {
+        if !system_program::check_id(account.owner()) {
+            return Err(self::fee_distribution::DepositFeeError::InvalidAccountOwner);
+        }
+
+        if reserved_account_keys.is_reserved(collector_id) {
+            //return Err(self::fee_distribution::DepositFeeError::ReservedCollector);
+            return Err(self::fee_distribution::DepositFeeError::InvalidAccountOwner);
+        }
+
+        // TODO use SIMD-0392 feature
+        let relax_post_execution_balance_checks = false;
+        if !rent.is_exempt(account.lamports(), account.data().len())
+            && (!relax_post_execution_balance_checks || pre_lamports == 0)
+        {
+            return Err(self::fee_distribution::DepositFeeError::InvalidRentPayingAccount);
+        }
+
+        Ok(())
     }
 
     fn update_reward_commissions(&self, reward_commission_accounts: &RewardCommissionAccounts) {

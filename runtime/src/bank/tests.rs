@@ -159,6 +159,7 @@ impl RewardCommission {
             commission_account,
             commission_bps,
             commission_lamports: rng.random_range(1..200),
+            is_vote_account: rng.random_bool(0.5),
         }
     }
 }
@@ -11174,7 +11175,10 @@ fn test_system_instruction_unsigned_transaction() {
 #[test]
 fn test_calculate_commission_accounts_empty() {
     let reward_commissions = HashMap::default();
-    let result = Bank::calculate_commission_accounts(reward_commissions);
+    let reserved_account_keys = ReservedAccountKeys::default();
+    let rent = Rent::default();
+    let result =
+        Bank::calculate_commission_accounts(reward_commissions, &reserved_account_keys, &rent);
     assert!(result.accounts_with_rewards.is_empty());
 }
 
@@ -11190,29 +11194,40 @@ fn test_calculate_commission_accounts_overflow() {
             commission_account,
             commission_bps: 0,
             commission_lamports: 1, // enough to overflow
+            is_vote_account: false,
         },
     );
-    let result = Bank::calculate_commission_accounts(reward_commissions);
+    let reserved_account_keys = ReservedAccountKeys::default();
+    let rent = Rent::default();
+    let result =
+        Bank::calculate_commission_accounts(reward_commissions, &reserved_account_keys, &rent);
     assert!(result.accounts_with_rewards.is_empty());
 }
 
 #[test]
 fn test_calculate_commission_accounts_normal() {
     let pubkey = solana_pubkey::new_rand();
+    let reserved_account_keys = ReservedAccountKeys::default();
+    let rent = Rent::default();
     for commission_bps in [0, 100] {
         for commission_lamports in 0..2 {
             let mut reward_commissions = HashMap::default();
             let mut commission_account = AccountSharedData::default();
-            commission_account.set_lamports(1);
+            commission_account.set_lamports(LAMPORTS_PER_SOL); // make rent-exempt
             reward_commissions.insert(
                 pubkey,
                 RewardCommission {
                     commission_account: commission_account.clone(),
                     commission_bps,
                     commission_lamports,
+                    is_vote_account: false,
                 },
             );
-            let result = Bank::calculate_commission_accounts(reward_commissions);
+            let result = Bank::calculate_commission_accounts(
+                reward_commissions,
+                &reserved_account_keys,
+                &rent,
+            );
             assert_eq!(result.accounts_with_rewards.len(), 1);
             let (pubkey_result, rewards, account) = &result.accounts_with_rewards[0];
             _ = commission_account.checked_add_lamports(commission_lamports);
