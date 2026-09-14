@@ -1145,7 +1145,7 @@ impl Bank {
         let feature_snapshot = self.feature_set.snapshot();
         let relax_post_exec_min_balance_check = feature_snapshot.relax_post_exec_min_balance_check;
         let custom_commission_collector = feature_snapshot.custom_commission_collector;
-        let block_revenue_sharing = feature_snapshot.block_revenue_sharing;
+        let block_revenue_sharing = true;
 
         let total_non_incinerator_burned_lamports = AtomicU64::new(0);
         let total_incinerator_lamports = AtomicU64::new(0);
