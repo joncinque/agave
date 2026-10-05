@@ -398,6 +398,7 @@ declare_process_instruction!(Entrypoint, DEFAULT_COMPUTE_UNITS, |invoke_context|
             if !feature_set.commission_rate_in_basis_points
                 || !feature_set.custom_commission_collector
                 || !feature_set.block_revenue_sharing
+                || !feature_set.vote_program_deposit_delegator_rewards
             {
                 return Err(InstructionError::InvalidInstructionData);
             }
@@ -513,6 +514,7 @@ mod tests {
         block_revenue_sharing: bool,
         vote_account_initialize_v2: bool,
         alpenglow_migration_succeeded: bool,
+        vote_program_deposit_delegator_rewards: bool,
     }
 
     impl VoteProgramFeatures {
@@ -524,6 +526,7 @@ mod tests {
                 block_revenue_sharing: true,
                 vote_account_initialize_v2: true,
                 alpenglow_migration_succeeded: false,
+                vote_program_deposit_delegator_rewards: true,
             }
         }
     }
@@ -560,6 +563,7 @@ mod tests {
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded,
+            vote_program_deposit_delegator_rewards,
         } = features;
         let cu_consumed = RefCell::new(0u64);
         let accounts = mock_process_instruction_with_feature_set(
@@ -590,6 +594,7 @@ mod tests {
                 custom_commission_collector,
                 block_revenue_sharing,
                 vote_account_initialize_v2,
+                vote_program_deposit_delegator_rewards,
                 ..SVMFeatureSet::all_enabled()
             },
         );
@@ -970,6 +975,7 @@ mod tests {
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded: false,
+            vote_program_deposit_delegator_rewards: true,
         };
 
         let accounts = process_instruction(
@@ -1102,6 +1108,7 @@ mod tests {
             block_revenue_sharing,
             vote_account_initialize_v2,
             alpenglow_migration_succeeded: false,
+            vote_program_deposit_delegator_rewards: true,
         };
 
         let all_v2_features_enabled = bls_pubkey_management_in_vote_account
@@ -4854,7 +4861,6 @@ mod tests {
         }
     }
 
-    // Test DepositDelegatorRewards instruction (SIMD-0123).
     #[test]
     fn test_deposit_delegator_rewards() {
         const DEPOSIT_DELEGATOR_REWARDS_COMPUTE_UNITS: u64 =
@@ -4910,6 +4916,7 @@ mod tests {
                 commission_rate_in_basis_points: false,
                 custom_commission_collector: true,
                 block_revenue_sharing: true,
+                vote_program_deposit_delegator_rewards: true,
                 ..Default::default()
             },
             &instruction_data,
@@ -4924,6 +4931,7 @@ mod tests {
                 commission_rate_in_basis_points: true,
                 custom_commission_collector: false,
                 block_revenue_sharing: true,
+                vote_program_deposit_delegator_rewards: true,
                 ..Default::default()
             },
             &instruction_data,
@@ -4938,6 +4946,22 @@ mod tests {
                 commission_rate_in_basis_points: true,
                 custom_commission_collector: true,
                 block_revenue_sharing: false,
+                vote_program_deposit_delegator_rewards: true,
+                ..Default::default()
+            },
+            &instruction_data,
+            transaction_accounts.clone(),
+            instruction_accounts.clone(),
+            Err(InstructionError::InvalidInstructionData),
+        );
+
+        // Fail - SIMD-0686: vote_program_deposit_delegator_rewards disabled.
+        process_instruction(
+            VoteProgramFeatures {
+                commission_rate_in_basis_points: true,
+                custom_commission_collector: true,
+                block_revenue_sharing: true,
+                vote_program_deposit_delegator_rewards: false,
                 ..Default::default()
             },
             &instruction_data,

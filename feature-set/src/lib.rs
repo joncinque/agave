@@ -81,6 +81,7 @@ pub struct FeatureSnapshot {
     pub relax_fee_payer_constraint: bool,
     pub remove_inactive_stakes: bool,
     pub loader_v3_set_program_data_to_elf_length: bool,
+    pub vote_program_deposit_delegator_rewards: bool,
 }
 
 impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
@@ -182,6 +183,9 @@ impl From<&AHashMap<Pubkey, u64>> for FeatureSnapshot {
             remove_inactive_stakes: is_active(&remove_inactive_stakes::ID),
             loader_v3_set_program_data_to_elf_length: is_active(
                 &loader_v3_set_program_data_to_elf_length::ID,
+            ),
+            vote_program_deposit_delegator_rewards: is_active(
+                &vote_program_deposit_delegator_rewards::ID,
             ),
         }
     }
@@ -344,6 +348,7 @@ impl FeatureSet {
             relax_fee_payer_constraint: snapshot.relax_fee_payer_constraint,
             loader_v3_set_program_data_to_elf_length: snapshot
                 .loader_v3_set_program_data_to_elf_length,
+            vote_program_deposit_delegator_rewards: snapshot.vote_program_deposit_delegator_rewards,
         }
     }
 }
@@ -1442,7 +1447,11 @@ pub mod limit_instruction_accounts {
 }
 
 pub mod block_revenue_sharing {
-    solana_pubkey::declare_id!("DSroRTaL5zozFw5yRYpaCTjeND1mSxxsnAeSi5vhELUv");
+    solana_pubkey::declare_id!("Crbnc267wkJvFhYakqwWWX57sx5bkrftJLekzy6yWKLT");
+}
+
+pub mod vote_program_deposit_delegator_rewards {
+    solana_pubkey::declare_id!("VoteProgramDepositDe1egatorRewards111111111");
 }
 
 pub mod vote_account_initialize_v2 {
@@ -2634,6 +2643,10 @@ pub static FEATURE_NAMES: LazyLock<AHashMap<Pubkey, &'static str>> = LazyLock::n
         (
             loader_v3_set_program_data_to_elf_length::id(),
             "SIMD-0433: Loader V3 Set Program Data to ELF Length",
+        ),
+        (
+            vote_program_deposit_delegator_rewards::id(),
+            "SIMD-0686: Vote Program Deposit Delegator Rewards",
         ),
         /*************** ADD NEW FEATURES HERE ***************/
         /***** ADD NEW FEATURE BOOL TO `FeatureSnapshot` *****/
